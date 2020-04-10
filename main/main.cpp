@@ -1,3 +1,7 @@
+#include "ledstrip.h"
+#include "color.h"
+#include "sunclock.h"
+
 #include <nvs_flash.h>
 #include <esp_wifi.h>
 #include <esp_sntp.h>
@@ -9,101 +13,70 @@
 
 #include <protocol_examples_common.h>
 
-#include "ledstrip.h"
-#include "colorcurve.h"
+#include <sys/time.h>
+#include <time.h>
 
+const char* DEFAULT_TIMEZONE="EET-2EEST,M3.5.0/3,M10.5.0/4"; // Helsinki
 const char* TAG = "restapi";
 #define LED_STATUS_GPIO GPIO_NUM_2
-
-#define NUM_COLORS 2
-volatile int led_red[NUM_COLORS] = {255, 0};
-volatile int led_green[NUM_COLORS] = { 0, 0};
-volatile int led_blue[NUM_COLORS] = { 0, 128};
-
-const CurvePoint sunsetGradient[] = {
-  {40, {255, 180, 0}}, // Yellow
-  {25, {255, 15, 15}}, // RedIsh
-  {75, {38, 36, 120}}, // Blue
-  {0,  {38, 36, 120}},   // Blue
-};
-
-const CurvePoint dayGradient[] = {
-  {40,  {255, 255, 0}}, // Yellow
-  {140, {128, 128, 255}}, // Light Blue
-  {0,   {128, 128, 255}}, // Light Blue
-};
-
-const CurvePoint nightGradient[] = {
-  {40, {38, 36, 120}}, // Blue
-  {75, {10, 10, 80}}, // Light Blue
-  {75, {0, 0, 0}}, // Light Blue
-};
-
-const ColorCurve sunsetCurve(sunsetGradient, sizeof(sunsetGradient) / sizeof(sunsetGradient[0]));
-const ColorCurve dayCurve(dayGradient, sizeof(dayGradient) / sizeof(dayGradient[0]));
-const ColorCurve nightCurve(nightGradient, sizeof(nightGradient) / sizeof(nightGradient[0]));
 
 extern "C" {
   void app_main();
 }
 
-static esp_err_t light_color_get_handler(httpd_req_t* req);
+time_t lastSyncRawTime;
 
-static const httpd_uri_t lightcolor = {
-    .uri       = "/lightcolor",
+static esp_err_t localtime_get_handler(httpd_req_t* req);
+
+static const httpd_uri_t localtime_uri = {
+    .uri       = "/localtime",
     .method    = HTTP_GET,
-    .handler   = light_color_get_handler,
+    .handler   = localtime_get_handler,
     .user_ctx  = nullptr
 };
 
-static esp_err_t light_color_get_handler(httpd_req_t* req)
+void setTimezone(const char* tzString)
 {
-    int r = 0;
-    int g = 0;
-    int b = 0;
-    int c = 0;
+    setenv("TZ", tzString, true);
+    tzset();
+}
 
+static esp_err_t localtime_get_handler(httpd_req_t* req)
+{
     size_t buf_len = httpd_req_get_url_query_len(req) + 1;
     if (buf_len > 1) {
         char* buf = (char*)malloc(buf_len);
         if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
-            ESP_LOGI(TAG, "Found URL query => %s", buf);
             char param[32];
             /* Get value of expected key from query string */
-            if (httpd_query_key_value(buf, "r", param, sizeof(param)) == ESP_OK) {
-
-                r = atoi(param);
-                ESP_LOGI(TAG, "Found URL query parameter => r=%d", r);
-            }
-            if (httpd_query_key_value(buf, "g", param, sizeof(param)) == ESP_OK) {
-
-                g = atoi(param);
-                ESP_LOGI(TAG, "Found URL query parameter => g=%d", g);
-            }
-            if (httpd_query_key_value(buf, "b", param, sizeof(param)) == ESP_OK) {
-
-                b = atoi(param);
-                ESP_LOGI(TAG, "Found URL query parameter => b=%d", b);
-            }
-            if (httpd_query_key_value(buf, "c", param, sizeof(param)) == ESP_OK) {
-
-                c = atoi(param);
-                if (c < 0 || c > NUM_COLORS) 
-                    c = 0;
-                ESP_LOGI(TAG, "Found URL query parameter => c=%d", c);
-            }
-               
+            if (httpd_query_key_value(buf, "tz", param, sizeof(param)) == ESP_OK) {
+                ESP_LOGI(TAG, "Found URL query parameter => tz=%s", param);
+                setTimezone(param);
+            }               
         }
         free(buf);
     }
 
-    led_red[c] = r;
-    led_green[c] = g;
-    led_blue[c] = b;
+    time_t timeNowRaw;
+    struct tm timenow;
+    char timeNowStr[50];
+    time(&timeNowRaw);
+    localtime_r(&timeNowRaw, &timenow);
+    asctime_r(&timenow, timeNowStr);
+    
+    struct tm timeSync;
+    char timeSyncStr[50];
+    localtime_r(&lastSyncRawTime, &timeSync);
+    asctime_r(&timeSync, timeSyncStr);
 
-    const char* resp_str = "lightcolor OK";
-    httpd_resp_send(req, resp_str, strlen(resp_str));
+    const char* tz = getenv("TZ");
 
+    if (tz == nullptr)
+        tz = "[not set]";
+
+    char buffer[256];
+    sprintf(buffer, "Timezone:%s<br/>Current LocalTime: %s<br/>Last Sync time: %s", tz, timeNowStr, timeSyncStr);
+    httpd_resp_send(req, buffer, strlen(buffer));
     return ESP_OK;
 }
 
@@ -117,7 +90,7 @@ static httpd_handle_t start_webserver(void)
     if (httpd_start(&server, &config) == ESP_OK) {
         // Set URI handlers
         ESP_LOGI(TAG, "Registering URI handlers");
-        httpd_register_uri_handler(server, &lightcolor);
+        httpd_register_uri_handler(server, &localtime_uri);
 
         // Status LED on
         gpio_set_level(LED_STATUS_GPIO, 1);
@@ -162,28 +135,34 @@ void refresh_leds_task(void* pvParameters)
     const int LED_COUNT = 12*4;
     LedStrip ledstrip(RMT_CHANNEL_0, GPIO_NUM_18, LED_COUNT, Timings_WS2812b);
 
-    int x = 0;
-
-    int step = 256 / LED_COUNT;
-
     while(true)
     {
+        time_t timeNowRaw;
+        time(&timeNowRaw);
+        struct tm timeNow;
+        localtime_r(&timeNowRaw, &timeNow);
+
+        int clockPhase;
+        float clockProgress;
+        sunClockTimeToPhaseAndProgress(&timeNow, clockPhase, clockProgress);
+
         for (int i = 0; i < LED_COUNT; i++)
         {
             Color c;
-            sunsetCurve.sample(i * step, c);
-
-            //int c = (i >= x && i < x + LED_COUNT/2) ||
-            //    (i >= x - LED_COUNT && i < x - LED_COUNT/2) ? 0 : 1;
-
+            sampleSunClock(i, LED_COUNT, clockPhase, clockProgress, c);
             ledstrip.setPixel(i, c.r, c.g, c.b);
         }
         ledstrip.refresh();
 
-        x = (x + 1) % LED_COUNT;
-
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+void timesync_handler(struct timeval* tv)
+{
+    time(&lastSyncRawTime);
+    struct tm* timenow = localtime(&lastSyncRawTime);
+    ESP_LOGI(TAG, "Time Synchronized - current local time and date: '%s'", asctime(timenow));
 }
 
 void app_main(void)
@@ -210,6 +189,8 @@ void app_main(void)
     ESP_ERROR_CHECK(example_connect());
 
     // Sync network time
+    setTimezone(DEFAULT_TIMEZONE);
+    sntp_set_time_sync_notification_cb(&timesync_handler);
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
     sntp_setservername(0, "pool.ntp.org");
     sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
