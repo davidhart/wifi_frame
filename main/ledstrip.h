@@ -1,6 +1,7 @@
 #pragma once
 
 #include <driver/rmt.h>
+#include <cstdint>
 
 class LedStripTimings
 {
@@ -32,6 +33,7 @@ public:
 	~LedStrip();
 
 	void setPixel(int pixelIndex, int red, int green, int blue);
+	void setPixel(int pixelIndex, uint8_t red, uint8_t green, uint8_t blue);
 	void refresh();
 
 	inline int getLedCount() const { return m_ledCount; }

@@ -75,6 +75,16 @@ void LedStrip::setPixel(int pixelIndex, int red, int green, int blue)
 	setByte(i+16, (uint8_t)(blue & 0xFF));
 }
 
+void LedStrip::setPixel(int pixelIndex, uint8_t red, uint8_t green, uint8_t blue)
+{
+    int i = pixelIndex * BITS_PER_PIXEL;
+
+    // Byte order grb
+    setByte(i, green);
+    setByte(i+8, red);
+    setByte(i+16, blue);   
+}
+
 void LedStrip::refresh()
 {
 	ESP_ERROR_CHECK(rmt_write_items(m_channel, m_data, m_dataSize, true));

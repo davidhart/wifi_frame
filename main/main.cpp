@@ -10,6 +10,7 @@
 #include <protocol_examples_common.h>
 
 #include "ledstrip.h"
+#include "colorcurve.h"
 
 const char* TAG = "restapi";
 #define LED_STATUS_GPIO GPIO_NUM_2
@@ -18,6 +19,29 @@ const char* TAG = "restapi";
 volatile int led_red[NUM_COLORS] = {255, 0};
 volatile int led_green[NUM_COLORS] = { 0, 0};
 volatile int led_blue[NUM_COLORS] = { 0, 128};
+
+const CurvePoint sunsetGradient[] = {
+  {40, {255, 180, 0}}, // Yellow
+  {25, {255, 15, 15}}, // RedIsh
+  {75, {38, 36, 120}}, // Blue
+  {0,  {38, 36, 120}},   // Blue
+};
+
+const CurvePoint dayGradient[] = {
+  {40,  {255, 255, 0}}, // Yellow
+  {140, {128, 128, 255}}, // Light Blue
+  {0,   {128, 128, 255}}, // Light Blue
+};
+
+const CurvePoint nightGradient[] = {
+  {40, {38, 36, 120}}, // Blue
+  {75, {10, 10, 80}}, // Light Blue
+  {75, {0, 0, 0}}, // Light Blue
+};
+
+const ColorCurve sunsetCurve(sunsetGradient, sizeof(sunsetGradient) / sizeof(sunsetGradient[0]));
+const ColorCurve dayCurve(dayGradient, sizeof(dayGradient) / sizeof(dayGradient[0]));
+const ColorCurve nightCurve(nightGradient, sizeof(nightGradient) / sizeof(nightGradient[0]));
 
 extern "C" {
   void app_main();
@@ -140,14 +164,19 @@ void refresh_leds_task(void* pvParameters)
 
     int x = 0;
 
+    int step = 256 / LED_COUNT;
+
     while(true)
     {
         for (int i = 0; i < LED_COUNT; i++)
         {
-            int c = (i >= x && i < x + LED_COUNT/2) ||
-                (i >= x - LED_COUNT && i < x - LED_COUNT/2) ? 0 : 1;
+            Color c;
+            sunsetCurve.sample(i * step, c);
 
-            ledstrip.setPixel(i, led_red[c], led_green[c], led_blue[c]);
+            //int c = (i >= x && i < x + LED_COUNT/2) ||
+            //    (i >= x - LED_COUNT && i < x - LED_COUNT/2) ? 0 : 1;
+
+            ledstrip.setPixel(i, c.r, c.g, c.b);
         }
         ledstrip.refresh();
 
