@@ -25,14 +25,25 @@ extern "C" {
 }
 
 time_t lastSyncRawTime;
+volatile bool demoMode = false;
+volatile int demoElapsedMs = 0;
+volatile int demoLength = 5000;
 
 static esp_err_t localtime_get_handler(httpd_req_t* req);
+static esp_err_t demo_get_handler(httpd_req_t* req);
 
 static const httpd_uri_t localtime_uri = {
-    .uri       = "/localtime",
-    .method    = HTTP_GET,
-    .handler   = localtime_get_handler,
-    .user_ctx  = nullptr
+    .uri        = "/localtime",
+    .method     = HTTP_GET,
+    .handler    = localtime_get_handler,
+    .user_ctx   = nullptr
+};
+
+static const httpd_uri_t demo_uri = {
+    .uri        = "/demo",
+    .method     = HTTP_GET,
+    .handler    = demo_get_handler,
+    .user_ctx   = nullptr
 };
 
 void setTimezone(const char* tzString)
@@ -48,9 +59,8 @@ static esp_err_t localtime_get_handler(httpd_req_t* req)
         char* buf = (char*)malloc(buf_len);
         if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
             char param[32];
-            /* Get value of expected key from query string */
             if (httpd_query_key_value(buf, "tz", param, sizeof(param)) == ESP_OK) {
-                ESP_LOGI(TAG, "Found URL query parameter => tz=%s", param);
+                ESP_LOGI(TAG, "localtime => tz=%s", param);
                 setTimezone(param);
             }               
         }
@@ -80,6 +90,34 @@ static esp_err_t localtime_get_handler(httpd_req_t* req)
     return ESP_OK;
 }
 
+static esp_err_t demo_get_handler(httpd_req_t* req)
+{
+    size_t buf_len = httpd_req_get_url_query_len(req) + 1;
+    if (buf_len > 1) {
+        char* buf = (char*)malloc(buf_len);
+        if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+            char param[32];
+            if (httpd_query_key_value(buf, "length", param, sizeof(param)) == ESP_OK) {
+                ESP_LOGI(TAG, "demo => length=%s", param);
+                int length = atoi(param);
+
+                if (length > 0)
+                {
+                    demoLength = length*1000;
+                }
+            }
+        }
+        free(buf);
+    }
+
+    demoMode = true;
+    demoElapsedMs = 0;
+    char buffer[256];
+    sprintf(buffer, "Starting demo, length: %dms", demoLength);
+    httpd_resp_send(req, buffer, strlen(buffer));
+    return ESP_OK;
+}
+
 static httpd_handle_t start_webserver(void)
 {
     httpd_handle_t server = 0;
@@ -91,6 +129,7 @@ static httpd_handle_t start_webserver(void)
         // Set URI handlers
         ESP_LOGI(TAG, "Registering URI handlers");
         httpd_register_uri_handler(server, &localtime_uri);
+        httpd_register_uri_handler(server, &demo_uri);
 
         // Status LED on
         gpio_set_level(LED_STATUS_GPIO, 1);
@@ -132,13 +171,30 @@ static void connect_handler(void* arg, esp_event_base_t event_base,
 
 void refresh_leds_task(void* pvParameters)
 {
+    const int FRAME_WAIT_TIME_MS = 10;
     const int LED_COUNT = 12*4;
     LedStrip ledstrip(RMT_CHANNEL_0, GPIO_NUM_18, LED_COUNT, Timings_WS2812b);
+
+
 
     while(true)
     {
         time_t timeNowRaw;
         time(&timeNowRaw);
+
+        if (demoMode)
+        {
+            timeNowRaw += (time_t)(24 * 60 * 60 * ((float)demoElapsedMs / (float)demoLength));
+
+            demoElapsedMs += FRAME_WAIT_TIME_MS;
+
+            if (demoElapsedMs >= demoLength)
+            {
+                demoMode = false;
+                demoElapsedMs = 0;
+            }
+        }
+
         struct tm timeNow;
         localtime_r(&timeNowRaw, &timeNow);
 
@@ -154,7 +210,7 @@ void refresh_leds_task(void* pvParameters)
         }
         ledstrip.refresh();
 
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(FRAME_WAIT_TIME_MS));
     }
 }
 

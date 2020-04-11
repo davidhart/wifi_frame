@@ -34,7 +34,7 @@ int hoursToSeconds(int hours)
 }
 int secondsPassed(struct tm* timeNow, int hour)
 {
-	return (hour - timeNow->tm_hour) * 60 * 60 +
+	return (timeNow->tm_hour - hour) * 60 * 60 +
 		timeNow->tm_min * 60 +
 		timeNow->tm_sec;
 }
