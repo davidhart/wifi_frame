@@ -1,35 +1,30 @@
 #pragma once
 
-#include <driver/rmt.h>
+#include <driver/rmt_tx.h>
 #include <cstdint>
 
-class LedStripTimings
+// in nanoseconds
+struct led_strip_timings
 {
-public:
-	constexpr LedStripTimings(int T0H_ns, int T0L_ns, int T1H_ns, int T1L_ns, int reset_ns) :
-		T0H_ns(T0H_ns),
-		T0L_ns(T0L_ns),
-		T1H_ns(T1H_ns),
-		T1L_ns(T1L_ns),
-		reset_ns(reset_ns)
-	{
-	}
-
-	int T0H_ns;
-	int T0L_ns;
-	int T1H_ns;
-	int T1L_ns;
-	int reset_ns;
-
-	
+	uint16_t bit0_h;
+	uint16_t bit0_l;
+	uint16_t bit1_h;
+	uint16_t bit1_l;
+	uint16_t reset;
 };
 
-constexpr LedStripTimings Timings_WS2812b(400, 850, 850, 400, 100000);
+constexpr led_strip_timings Timings_WS2812b = {
+	.bit0_h = 400, 
+	.bit0_l = 850,
+	.bit1_h = 850, 
+	.bit1_l = 400,
+	.reset = 20000
+};
 
 class LedStrip
 {
 public:
-	LedStrip(rmt_channel_t channel, gpio_num_t ledPin, int ledCount, const LedStripTimings& timings);
+	LedStrip(gpio_num_t ledPin, int ledCount, const led_strip_timings& timings);
 	~LedStrip();
 
 	void setPixel(int pixelIndex, int red, int green, int blue);
@@ -40,16 +35,11 @@ public:
 
 private:
 
-	void setByte(int index, uint8_t byte);
-
-	rmt_channel_t m_channel;
+	rmt_channel_handle_t m_channel;
+	rmt_encoder_handle_t m_encoder;
 	gpio_num_t m_ledPin;
 	int m_ledCount;
 
-	rmt_item32_t m_itemBit0;
-	rmt_item32_t m_itemBit1;
-	rmt_item32_t m_itemReset;
-
-	rmt_item32_t* m_data;
+	uint8_t* m_data;
 	int m_dataSize;
 };

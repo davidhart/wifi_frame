@@ -7,9 +7,11 @@
 #include <esp_sntp.h>
 #include <esp_http_server.h>
 #include <esp_event.h>
+#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include <esp_log.h>
 #include <esp_types.h>
 #include <esp_err.h>
+#include <driver/gpio.h>
 
 #include <protocol_examples_common.h>
 
@@ -17,7 +19,7 @@
 #include <time.h>
 
 const char* DEFAULT_TIMEZONE="EET-2EEST,M3.5.0/3,M10.5.0/4"; // Helsinki
-const char* TAG = "restapi";
+const char* TAG = "main";
 #define LED_STATUS_GPIO GPIO_NUM_2
 
 extern "C" {
@@ -27,7 +29,7 @@ extern "C" {
 time_t lastSyncRawTime;
 volatile bool demoMode = false;
 volatile int demoElapsedMs = 0;
-volatile int demoLength = 5000;
+volatile int demoLength = 10000;
 
 static esp_err_t localtime_get_handler(httpd_req_t* req);
 static esp_err_t demo_get_handler(httpd_req_t* req);
@@ -172,10 +174,9 @@ static void connect_handler(void* arg, esp_event_base_t event_base,
 void refresh_leds_task(void* pvParameters)
 {
     const int FRAME_WAIT_TIME_MS = 10;
-    const int LED_COUNT = 12*4;
-    LedStrip ledstrip(RMT_CHANNEL_0, GPIO_NUM_18, LED_COUNT, Timings_WS2812b);
-
-
+    const int LED_COUNT = 12*4; // frame
+    //const int LED_COUNT = 18*6; // baubles
+    LedStrip ledstrip(GPIO_NUM_18, LED_COUNT, Timings_WS2812b);
 
     while(true)
     {
@@ -223,10 +224,19 @@ void timesync_handler(struct timeval* tv)
 
 void app_main(void)
 {
-    // Init onboard LED
-    gpio_pad_select_gpio(LED_STATUS_GPIO);
-    gpio_set_direction(LED_STATUS_GPIO, GPIO_MODE_OUTPUT);
+    ESP_LOGI(TAG, "app_main -> enter");
 
+    // Init onboard LED
+    //gpio_pad_select_gpio(LED_STATUS_GPIO);
+    gpio_config_t status_led_config = {
+        .pin_bit_mask = (1ULL << LED_STATUS_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    ESP_ERROR_CHECK(gpio_config(&status_led_config));
+    
     static httpd_handle_t server = 0;
 
     ESP_ERROR_CHECK(nvs_flash_init());
@@ -242,17 +252,20 @@ void app_main(void)
      * Read "Establishing Wi-Fi or Ethernet Connection" section in
      * examples/protocols/README.md for more information about this function.
      */
+
     ESP_ERROR_CHECK(example_connect());
+
+    ESP_LOGI(TAG, "app_main -> example_connect() done");
 
     // Sync network time
     setTimezone(DEFAULT_TIMEZONE);
-    sntp_set_time_sync_notification_cb(&timesync_handler);
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
-    sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
-    sntp_init();
+    esp_sntp_set_time_sync_notification_cb(&timesync_handler);
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
+    esp_sntp_init();
     // TODO: set timezone
-
+    
     // Create pinned to core1 - Important! rmt_driver_install performed by LedStrip must be performed
     // on core1 else the interrupt handlers will be installed on core0, shared with wifi, which seems to interrupt led timings
     xTaskCreatePinnedToCore(&refresh_leds_task, "refresh_leds", 1000, nullptr, 5, nullptr, 1);

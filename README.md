@@ -1,8 +1,8 @@
 # Wifi LED frame
 
-Compiled with esp-idf at rev e36516372a84ff894bde80bc26f9307c1c9e9af0
+Compiled with esp-idf v6.0.2
 
-Configure (be sure to set WiFi SSID and password):
+Configure (set WiFi SSID and password in example connect config, disable other connect methods):
 `idf.py menuconfig`
 
 Build, flash & monitor:
